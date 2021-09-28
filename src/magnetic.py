@@ -9,6 +9,8 @@ from std_msgs.msg import Float32
 
 d = {}
 maximum = minimum = 0
+
+
 def update_msg(msg, args):
     topic = args[0]
     func = args[1]
@@ -16,14 +18,12 @@ def update_msg(msg, args):
 
 
 topics_msgs_funcs = (
-        ('/imu_3dm/magnetic_field', MagneticField, lambda msg: np.array([msg.magnetic_field.x,
-                                     msg.magnetic_field.y,
-                                     msg.magnetic_field.z])),
-        ('/odometry/filtered', Odometry, lambda msg: np.arctan2(2*msg.pose.pose.orientation.w *
-                                                msg.pose.pose.orientation.z,
-                                                1 - 2 * msg.pose.pose.orientation.z *
-                                                msg.pose.pose.orientation.z)),
-        ('/imu_um7/compass_bearing', Float32, lambda msg: msg.data)
+    ('/imu_3dm/magnetic_field', MagneticField, lambda msg: np.array([msg.magnetic_field.x,
+                                                                     msg.magnetic_field.y,
+                                                                     msg.magnetic_field.z])),
+    ('/odometry/filtered', Odometry, lambda msg: np.arctan2(2*msg.pose.pose.orientation.w * msg.pose.pose.orientation.z,
+                                                            1 - 2 * msg.pose.pose.orientation.z * msg.pose.pose.orientation.z)),
+    ('/imu_um7/compass_bearing', Float32, lambda msg: msg.data)
 )
 
 rospy.init_node('compare_yaw_magnet', anonymous=True)

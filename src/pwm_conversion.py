@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from pynverse import inversefunc
 
 # %%
-bag = '../data/circle'
+bag = '../data/circles/21-03-17/16-59-30.bag'
 odo = pd.read_csv(bag+'_odo.csv',
                   usecols=[
                       'field.header.stamp',

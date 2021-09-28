@@ -1,0 +1,51 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Bag to TF collision",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/bag2tf_collision.py",
+            "console": "integratedTerminal",
+            "args": [
+                "data/circles/21-03-17",
+                "-p"
+            ],
+        },
+        {
+            "name": "Bag to TF bumpy",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/bag2tf_bumpy.py",
+            "console": "integratedTerminal",
+            "args": [
+                "data/bumpy/21-09-20"
+            ],
+        },
+        {
+            "name": "Bag to TF bumpy aug",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/bag2tf_bumpy_aug.py",
+            "console": "integratedTerminal",
+            "args": [
+                "data/bumpy/21-09-20"
+            ],
+        },
+        {
+            "name": "Bag to TF bumpy aug close",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/bag2tf_bumpy_aug1.py",
+            "console": "integratedTerminal",
+            "args": [
+                "data/bumpy/21-09-13",
+                "-b 0.2",
+                "-p"
+            ],
+        },
+    ]
+}

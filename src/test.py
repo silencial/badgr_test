@@ -39,21 +39,3 @@ with rosbag.Bag(bag_name) as bag:
         if len(msg.ranges) != 1009:
             print(msg)
             print(len(msg.ranges))
-
-# %% Show realsense image
-import rosbag
-from sensor_msgs.msg import Image
-import numpy as np
-import ros_numpy
-import PIL
-
-bag_name = '/home/silencial/Downloads/test.bag'
-
-with rosbag.Bag(bag_name) as bag:
-    for _, msg, t in bag.read_messages('/camera/color/image_raw'):
-        msg.__class__ = Image
-        img = ros_numpy.numpify(msg)
-        im = PIL.Image.fromarray(img)
-        im.show()
-        print(im.size)
-        break

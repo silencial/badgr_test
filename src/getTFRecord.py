@@ -1,4 +1,5 @@
 # %%
+from functools import partial
 from os import walk
 import time
 
@@ -10,23 +11,25 @@ import tensorflow as tf
 # %%
 tf.compat.v1.enable_eager_execution()
 OWNENV = False  # whether use own data
-
+COLLISION = False  # collision or bumpy data
 # %%
 if OWNENV:
     files = ['../data/circles/21-03-17/16-59-30.tfrecord']
-    raw_dataset = tf.data.TFRecordDataset(files)
 else:
-    COLLISION = True
     files = []
-    path = '../../data/tfrecords_collision' if COLLISION else '../../data/tfrecords_bumpy'
+    path = '../../badgr/data/tfrecords_collision' if COLLISION else '../../badgr/data/tfrecords_bumpy'
     for dirpath, dirnames, filenames in walk(path):
         for filename in filenames:
             if filename.endswith('tfrecord'):
                 files.append(dirpath+'/'+filename)
     files.sort()
-    # files.append('../../data/tfrecords_collision/08-02-2019_horizon_8/0000.tfrecord')
-    print(f'File numbers: {len(files)}')
-    raw_dataset = tf.data.TFRecordDataset(files)
+
+    # Only one file for testing
+    # files = ['../../badgr/data/tfrecords_collision/08-02-2019_horizon_8/0000.tfrecord'] \
+    #     if COLLISION else ['../../badgr/data/tfrecords_bumpy/08-02-2019_horizon_8/0000.tfrecord']
+
+print(f'File numbers: {len(files)}')
+raw_dataset = tf.data.TFRecordDataset(files)
 
 # %%
 if OWNENV:
@@ -101,9 +104,11 @@ else:
 
 names_to_dtypes = {}
 names_to_shapes = {}
-for name, shape, _, dtype in names_shapes_limits_dtypes:
+names_to_limits = {}
+for name, shape, limit, dtype in names_shapes_limits_dtypes:
     names_to_dtypes[name] = dtype
     names_to_shapes[name] = shape
+    names_to_limits[name] = limit
 
 
 def get_names_dtypes_shapes(observation_names, action_names):
@@ -144,7 +149,48 @@ def parse_fn(data):
         tensor.set_shape([np.prod(shape)])
         tensor = tf.reshape(tensor, shape)
         reshape_decode_parsed[name] = tensor
+
+    # NOTE: randomize actions after done
+    # done_float = tf.cast(reshape_decode_parsed['outputs/done'], tf.float32)[:, tf.newaxis]
+    # for name in action_names:
+    #     lower, upper = names_to_limits[name]
+    #     shape = names_to_shapes[name]
+    #     action = reshape_decode_parsed['inputs/' + name]
+    #     horizon = action.shape[0].value
+    #     action = (1 - done_float) * action + done_float * \
+    #         tf.random.uniform(shape=[horizon] + list(shape),
+    #                           minval=lower, maxval=upper)
+    #     reshape_decode_parsed['inputs/' + name] = action
     return reshape_decode_parsed
+
+
+# %%
+def commands_to_positions(linvel, angvel):
+    dt = 0.25
+    N = len(linvel)
+    all_angles = [np.zeros(N)]
+    all_positions = [np.zeros((N, 2))]
+    for linvel_i, angvel_i in zip(linvel.T, angvel.T):
+        angle_i = all_angles[-1] + dt * angvel_i
+        position_i = all_positions[-1] + \
+                     dt * linvel_i[..., np.newaxis] * np.stack([np.cos(angle_i), np.sin(angle_i)], axis=1)
+
+        all_angles.append(angle_i)
+        all_positions.append(position_i)
+
+    all_positions = np.stack(all_positions, axis=1)
+    return all_positions
+
+
+def rotate_to_global(pos, yaw):
+    R = np.array([[np.cos(yaw), -np.sin(yaw), 0.],
+                  [np.sin(yaw), np.cos(yaw), 0.],
+                  [0., 0., 1.]])
+    pos = np.hstack((pos, np.zeros([len(pos), 1])))
+
+    positions_in_origin = (pos - pos[0]).dot(R)[:, :2]
+
+    return positions_in_origin
 
 
 # %%
@@ -161,27 +207,33 @@ count = 0
 count_close = 0
 count_img = 0
 for data in dataset:
-    count += 1
-    if data['outputs/collision/close'].numpy().sum() > 0.5:
-        count_close += 1
-        continue
+    if count > 5:
+        break
+
+    # if data['outputs/collision/close'].numpy().sum() > 0.5:
+    #     count_close += 1
+    #     continue
     # if data['outputs/done'].numpy().sum() < 0.5:
     #     continue
     # if data['outputs/bumpy'].numpy().sum() < 0.5:
     #     continue
-    if count_img > 100:
-        break
+    count += 1
 
-    # print('-----collsion-----')
-    # print(data['inputs/collision/close'].numpy())
-    # print(data['outputs/collision/close'].numpy().flatten())
+    print('-----collsion-----')
+    print(data['inputs/collision/close'].numpy())
+    # print(data['inputs/collision/stuck'].numpy())
+    print(data['outputs/collision/close'].numpy().flatten())
     # print(data['outputs/collision/stuck'].numpy().flatten())
 
-    # print('-----position & yaw-----')
-    # print(data['inputs/jackal/position'].numpy())
-    # print(data['outputs/jackal/position'].numpy())
-    # print(data['inputs/jackal/yaw'].numpy())
-    # print(data['outputs/jackal/yaw'].numpy().flatten())
+    print('-----position & yaw-----')
+    pos_in = data['inputs/jackal/position'].numpy()
+    pos_out = data['outputs/jackal/position'].numpy()
+    print(pos_in)
+    print(pos_out)
+    yaw_in = data['inputs/jackal/yaw'].numpy()
+    yaw_out = data['outputs/jackal/yaw'].numpy()
+    print(yaw_in)
+    print(yaw_out.flatten())
 
     # print('-----velocity-----')
     # print(data['inputs/jackal/linear_velocity'])
@@ -189,12 +241,28 @@ for data in dataset:
     # print(data['inputs/jackal/angular_velocity'])
     # print(data['outputs/jackal/angular_velocity'])
 
-    # print('-----cmd-----')
-    # print(data['inputs/commands/linear_velocity'].numpy().flatten())
-    # print(data['inputs/commands/angular_velocity'].numpy().flatten())
+    print('-----cmd-----')
+    linvel = data['inputs/commands/linear_velocity'].numpy()
+    angvel = data['inputs/commands/angular_velocity'].numpy()
+    print(linvel.flatten())
+    print(angvel.flatten())
 
-    # print('-----done-----')
-    # print(data['outputs/done'].numpy())
+    print('-----done-----')
+    print(data['outputs/done'].numpy())
+
+    # compass_bearing = data['inputs/imu/compass_bearing'].numpy()[0]
+    # yaw = compass_bearing - 0.5 * np.pi  # so that east is 0 degrees
+
+    pos = commands_to_positions(linvel.reshape(-1, 8), angvel.reshape(-1, 8))
+    pos = pos[0]
+    pos_global = rotate_to_global(pos, -yaw_in[0])
+    pos_global += pos_in[:2]
+
+    # print('-----compass-----')
+    # print(compass_bearing)
+    print('-----predict-----')
+    print(pos_global)
+    print(np.linalg.norm(pos_global[1:]-pos_out[:, :2]))
 
     # jak_lin_acc = data['outputs/jackal/imu/linear_acceleration'].numpy()
     # jak_ang_vel = data['outputs/jackal/imu/angular_velocity'].numpy()
@@ -210,9 +278,9 @@ for data in dataset:
     if count_img < 100:
         img = data['inputs/images/rgb_left'].numpy()
         img = Image.fromarray(img)
-        img.save(f'../result/img/{count}.png')
-        # plt.imshow(img, interpolation='nearest')
-        # plt.show()
+        # img.save(f'../result/img/{count}.png')
+        plt.imshow(img, interpolation='nearest')
+        plt.show()
     count_img += 1
 
 print(f'Total data number: {count}')
@@ -220,11 +288,11 @@ print(f'Close number: {count_close}')
 print(f'Time elapsed: {time.time() - start_time}')
 
 # %%
-for data in dataset.take(500):
-    if data['outputs/collision/close'].numpy().sum() > 0.5:
-        continue
-    if data['outputs/done'].numpy().sum() < 0.5:
-        continue
+for data in dataset.take(10):
+    # if data['outputs/collision/close'].numpy().sum() > 0.5:
+    #     continue
+    # if data['outputs/done'].numpy().sum() < 0.5:
+    #     continue
     print('-----collsion-----')
     print(data['inputs/collision/close'].numpy())
     print(data['outputs/collision/close'].numpy().flatten())
@@ -246,9 +314,52 @@ for data in dataset.take(500):
     print('-----done-----')
     print(data['outputs/done'].numpy())
 
+    # img = data['inputs/images/rgb_left'].numpy()
+    # plt.imshow(img, interpolation='nearest')
+    # plt.show()
+
+
+# %% Bumpy
+for data in dataset.take(1):
     img = data['inputs/images/rgb_left'].numpy()
     plt.imshow(img, interpolation='nearest')
     plt.show()
 
+    print('-----bumpy-----')
+    print(data['inputs/bumpy'].numpy())
+    print(data['outputs/bumpy'].numpy().flatten())
+
+    print('-----angular_velocity-----')
+    print(data['inputs/jackal/imu/angular_velocity'].numpy())
+    print(data['outputs/jackal/imu/angular_velocity'].numpy())
+
+    print('-----linear_acceleration-----')
+    print(data['inputs/jackal/imu/linear_acceleration'].numpy())
+    print(data['outputs/jackal/imu/linear_acceleration'].numpy())
+
+    print('-----imu_angular_velocity-----')
+    print(data['inputs/imu/angular_velocity'].numpy())
+    print(data['outputs/imu/angular_velocity'].numpy())
+
+    print('-----imu_linear_acceleration-----')
+    print(data['inputs/imu/linear_acceleration'].numpy())
+    print(data['outputs/imu/linear_acceleration'].numpy())
+
+# %%
+num, bumpy_num, even_num, partial_num = 0, 0, 0, 0
+for data in dataset:
+    num += 1
+    bumpy = data['outputs/bumpy'].numpy().sum()
+    if bumpy == 8:
+        bumpy_num += 1
+    elif bumpy == 0:
+        even_num += 1
+    else:
+        partial_num += 1
+
+print(f'Total num: {num}\n',
+      f'Bumpy num: {bumpy_num}\n',
+      f'Even num: {even_num}\n',
+      f'Partial num: {partial_num}')
 
 # %%
