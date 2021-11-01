@@ -234,27 +234,55 @@ def read_latlongs(bag_name):
 
 
 # %%
-bag_name_out = '../data/bumpy/21-09-20/outer_loop_decker_quad.bag'
-bag_name_in = '../data/bumpy/21-09-20/inner_loop_decker_quad.bag'
-bag_name = '../data/bumpy/21-09-13/16-35-58.bag'
+def estimate(pos, yaw, cmd):
+    STEP_TIME = 0.25
+    x_ = [pos[0]]
+    y_ = [pos[1]]
+    yaw_ = [yaw]
+    for lin_vel, ang_vel in cmd[1:]:
+        yaw_new = yaw_[-1] + ang_vel*STEP_TIME
+        yaw_.append(yaw_new)
+
+        # Going straight
+        if abs(ang_vel) < 1e-3:
+            x_new = x_[-1] + lin_vel * np.cos(yaw_[-1]) * STEP_TIME
+            y_new = y_[-1] + lin_vel * np.sin(yaw_[-1]) * STEP_TIME
+            x_.append(x_new)
+            y_.append(y_new)
+            continue
+
+        r = lin_vel / ang_vel
+        x_new = x_[-1] + r * (np.sin(yaw_[-1]) - np.sin(yaw_[-2]))
+        y_new = y_[-1] + r * (-np.cos(-yaw_[-1]) + np.cos(yaw_[-2]))
+        x_.append(x_new)
+        y_.append(y_new)
+
+    pos_ = np.stack((x_, y_), axis=-1)
+    return pos_
+
+
+# %%
+bag_name_out = '../data/bumpy/21-09-28/outer_loop_decker_quad_cw.bag'
+bag_name_in = '../data/bumpy/21-09-28/inner_loop_decker_quad_cw.bag'
+# bag_name = '../data/bumpy/21-09-13/16-35-58.bag'
 
 pos_out, latlongs_out = read_latlongs(bag_name_out)
 pos_in, latlongs_in = read_latlongs(bag_name_in)
-pos, latlongs = read_latlongs(bag_name)
+# pos, latlongs = read_latlongs(bag_name)
 
-# %%
+
+# %% Plot gps
 gps_plotter = GPSPlotter()
 
-# %%
 coords_out = gps_plotter.latlong_to_coordinate(latlongs_out)
 coords_in = gps_plotter.latlong_to_coordinate(latlongs_in)
-coords = gps_plotter.latlong_to_coordinate(latlongs)
+# coords = gps_plotter.latlong_to_coordinate(latlongs)
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 ax.imshow(np.flipud(gps_plotter.satellite_image), origin='lower')
 ax.plot(coords_out[:, 0], coords_out[:, 1])
-# ax.plot(coords_in[:, 0], coords_in[:, 1])
-ax.plot(coords[:, 0], coords[:, 1])
+ax.plot(coords_in[:, 0], coords_in[:, 1])
+# ax.plot(coords[:, 0], coords[:, 1])
 
 # rospy.init_node('test', anonymous=True)
 # rospy.Subscriber('/gps/fix', NavSatFix, plot_gps)
@@ -272,16 +300,14 @@ inside = path.contains_points(coords_in)
 # %%
 pos_out = np.array(pos_out)
 pos_in = np.array(pos_in)
-pos = np.array(pos)
+# pos = np.array(pos)
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-ax.plot(pos_out[:, 0], pos_out[:, 1])
-# ax.plot(pos_in[:, 0], pos_in[:, 1])
-ax.plot(pos[:, 0], pos[:, 1])
+ax.plot(pos_out[:, 0], pos_out[:, 1], color='red')
+ax.plot(pos_in[:, 0], pos_in[:, 1], color='blue')
+# ax.plot(pos[:, 0], pos[:, 1])
 
 
 # %%
 path = mpltPath.Path(pos_out)
 inside = path.contains_points(pos_in)
-
-# %%

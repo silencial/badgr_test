@@ -10,11 +10,12 @@ import tensorflow as tf
 
 # %%
 tf.compat.v1.enable_eager_execution()
-OWNENV = False  # whether use own data
-COLLISION = False  # collision or bumpy data
+OWNENV = True  # whether use own data
+COLLISION = True  # collision or bumpy data
 # %%
 if OWNENV:
-    files = ['../data/circles/21-03-17/16-59-30.tfrecord']
+    # files = ['../data/circles/21-03-17/16-59-30.tfrecord']
+    files = ['../data/test/depth/001.tfrecord']
 else:
     files = []
     path = '../../badgr/data/tfrecords_collision' if COLLISION else '../../badgr/data/tfrecords_bumpy'
@@ -288,7 +289,7 @@ print(f'Close number: {count_close}')
 print(f'Time elapsed: {time.time() - start_time}')
 
 # %%
-for data in dataset.take(10):
+for data in dataset.take(1):
     # if data['outputs/collision/close'].numpy().sum() > 0.5:
     #     continue
     # if data['outputs/done'].numpy().sum() < 0.5:

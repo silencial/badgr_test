@@ -11,7 +11,7 @@
             "program": "${workspaceFolder}/src/bag2tf_collision.py",
             "console": "integratedTerminal",
             "args": [
-                "data/circles/21-03-17",
+                "data/circles/21-05-02/12-19-47.bag",
                 "-p"
             ],
         },
@@ -32,19 +32,8 @@
             "program": "${workspaceFolder}/src/bag2tf_bumpy_aug.py",
             "console": "integratedTerminal",
             "args": [
-                "data/bumpy/21-09-20"
-            ],
-        },
-        {
-            "name": "Bag to TF bumpy aug close",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/src/bag2tf_bumpy_aug1.py",
-            "console": "integratedTerminal",
-            "args": [
-                "data/bumpy/21-09-13",
-                "-b 0.2",
-                "-p"
+                "data/bumpy/21-09-20/inner_loop_decker_quad_ccw.bag",
+                "-r", "-0.1"
             ],
         },
     ]

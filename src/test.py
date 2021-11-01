@@ -39,3 +39,22 @@ with rosbag.Bag(bag_name) as bag:
         if len(msg.ranges) != 1009:
             print(msg)
             print(len(msg.ranges))
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.path as mpltPath
+
+square = [[0, 0], [1, 0], [1, 1], [0, 1]]
+path = mpltPath.Path(square)
+fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+pos = path.vertices
+pos = np.concatenate((pos, pos[0:1]))
+ax.plot(pos[:, 0], pos[:, 1], 'r')
+
+point = [0.5, 0.19]
+ax.plot(point[0], point[1], 'bo')
+print(path.contains_point(point, radius=-0.4))
+
+# %%

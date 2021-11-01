@@ -152,7 +152,7 @@ def get_img(msg):
     im = im.resize((width, height), PIL.Image.LANCZOS)
     im = np.array(im)
 
-    assert img.dtype == np.uint8, 'Image dtype not np.uint8'
+    assert im.dtype == np.uint8, 'Image dtype not np.uint8'
     return im
 
 

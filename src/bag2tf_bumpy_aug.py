@@ -1,5 +1,6 @@
 import argparse
-from os import walk
+import json
+import os
 from pathlib import Path
 
 import rosbag
@@ -12,11 +13,13 @@ import PIL
 import tensorflow as tf
 from loguru import logger
 
+DEBUG = True
 
 HORIZON = 8
 STEP_TIME = 0.25
 TOPICS = {'img': '/camera/color/image_raw',
           'odo': '/odometry/filtered'}
+AUG = 5  # augmentation number
 
 
 def plot_info(cmd, bag_name):
@@ -29,19 +32,6 @@ def plot_info(cmd, bag_name):
     ax2.set_title('angular vel')
 
     plt.savefig(fig_name)
-
-
-def read_boundary():
-    bag_name = 'data/bumpy/21-09-20/outer_loop_decker_quad_ccw.bag'
-    topics = ['/odometry/filtered']
-    pos = []
-    with rosbag.Bag(bag_name) as bag:
-        for _, msg, _ in bag.read_messages(topics):
-            pos.append([msg.pose.pose.position.x,
-                        msg.pose.pose.position.y])
-
-    path = mpltPath.Path(pos)
-    return path
 
 
 def read_bag(bag_name):
@@ -75,13 +65,13 @@ def read_bag(bag_name):
     return img_t, odo_t, pos, yaw, cmd
 
 
-def sample_times(img_t, odo_t, gap_time):
-    # NOTE: Filter out segements at start/end when the car is not moving
-    # t = np.where(np.abs(cmd[0]) > 0.2)[0] # 1500 is the neutral value for v
-    # start, end = t[0], t[-1]
+def sample_times(img_t, odo_t, cmd, gap_time):
+    # Filter out segements at start/end when the car is not moving
+    move_inds = np.where(np.abs(cmd[:, 0]) > 0.2)[0]  # 1500 is the neutral value for v
+    start_ind, end_ind = move_inds[0], move_inds[-1]
 
-    start_time = max(img_t[0], odo_t[0])
-    end_time = min(img_t[-1], odo_t[-1])
+    start_time = max(img_t[0], odo_t[start_ind])
+    end_time = min(img_t[-1], odo_t[end_ind])
     inds = np.searchsorted(img_t, [start_time, end_time - int(STEP_TIME*1e9)])
 
     # Sample time based on img frame
@@ -101,16 +91,6 @@ def interpolate(x, xp, yp):
         return np.interp(x, xp, yp)
     y = [np.interp(x, xp, ypi) for ypi in yp.T]
     return np.array(y)
-
-
-def sample_bumpy(t, imu_t, bumpy):
-    inds = np.searchsorted(imu_t, t)
-    bumpy_sample = np.zeros_like(t)
-    for bumpy_, inds_ in zip(bumpy_sample, inds):
-        for i in range(HORIZON):
-            bumpy_[i+1] = np.any(bumpy[inds_[i]:inds_[i+1]])
-
-    return bumpy_sample
 
 
 def sample_msgs(t, odo_t, pos, yaw, cmd):
@@ -167,7 +147,7 @@ def get_img(msg):
     im = im.resize((width, height), PIL.Image.LANCZOS)
     im = np.array(im)
 
-    assert img.dtype == np.uint8, 'Image dtype not np.uint8'
+    assert im.dtype == np.uint8, 'Image dtype not np.uint8'
     return im
 
 
@@ -179,8 +159,13 @@ def estimate(pos, yaw, cmd):
         yaw_new = yaw_[-1] + ang_vel*STEP_TIME
         yaw_.append(yaw_new)
 
+        # Going straight
         if abs(ang_vel) < 1e-3:
-            ang_vel = 1e-3
+            x_new = x_[-1] + lin_vel*np.cos(yaw_[-1])*STEP_TIME
+            y_new = y_[-1] + lin_vel*np.sin(yaw_[-1])*STEP_TIME
+            x_.append(x_new)
+            y_.append(y_new)
+            continue
 
         r = lin_vel / ang_vel
         x_new = x_[-1] + r*(np.sin(yaw_[-1]) - np.sin(yaw_[-2]))
@@ -192,13 +177,17 @@ def estimate(pos, yaw, cmd):
     return pos_
 
 
-def save_tfrecord(bag_name, boundary, t, pos, yaw, cmd):
+def save_tfrecord(bag_name, t, pos, yaw, cmd, radius):
     bag = rosbag.Bag(bag_name, 'r')
     ind = 0
     tf_name = bag_name.with_suffix('.tfrecord')
-    bumpy_all_num, bumpy_partial_num, bumpy_not_num = 0, 0, 0
+    bumpy_all, bumpy_partial, bumpy_not, bumpy_step = 0, 0, 0, 0
 
-    AUG = 10  # augmentation number
+    # DEBUG
+    if DEBUG:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+        ax.plot(pos[:, 0, 0], pos[:, 0, 1], 'r^')
+
     with tf.io.TFRecordWriter(str(tf_name)) as writer:
         for _, msg, _ in bag.read_messages(TOPICS['img']):
             if ind >= len(t):
@@ -208,41 +197,67 @@ def save_tfrecord(bag_name, boundary, t, pos, yaw, cmd):
                 eps[0, ...] = 0
                 eps[:, 0, :] = 0
 
-                for eps_i in eps:
-                    # cmd_i = cmd[ind] + eps_i  # randomize on existing action
-                    cmd_i = eps_i.copy()
-                    cmd_i[:, 0] += 1  # randomize on 1m/s vel and 0 steering angle
-                    pos_i = estimate(pos[ind, 0, :], yaw[ind, 0], cmd_i)
+                bnd = np.concatenate((pos[ind-50, 0, :].reshape(1, -1),
+                                      pos[ind, :, :],
+                                      pos[(ind+50) % len(t), 0, :].reshape(1, -1),
+                                      pos[ind-50, 0, :].reshape(1, -1)))
+                # DEBUG
+                if DEBUG:
+                    lines = []
+                    line, = ax.plot(bnd[:, 0], bnd[:, 1], '+-')
+                    lines.append(line)
+                    l_ind = 0
+                bnd = mpltPath.Path(bnd)
 
-                    bumpy_i = boundary.contains_points(pos_i)
-                    if bumpy_i.all():
-                        bumpy_all_num += 1
-                    elif bumpy_i.any():
-                        bumpy_partial_num += 1
+
+                for eps_i in eps:
+                    cmd_i = cmd[ind] + eps_i  # randomize on existing action
+                    # cmd_i = eps_i.copy()
+                    # cmd_i[:, 0] += 1  # randomize on 1m/s vel and 0 steering angle
+                    pos_i = estimate(pos[ind, 0, :], yaw[ind, 0], cmd_i)
+                    bumpy_i = bnd.contains_points(pos_i, radius=radius)
+
+                    # DEBUG
+                    if DEBUG:
+                        print(bumpy_i)
+                        line, = ax.plot(pos_i[:, 0], pos_i[:, 1], 'o-', label=l_ind)
+                        lines.append(line)
+                        l_ind += 1
+
+                    bumpy_step += bumpy_i[1:].sum()
+                    if bumpy_i[1:].all():
+                        bumpy_all += 1
+                    elif bumpy_i[1:].any():
+                        bumpy_partial += 1
                     else:  # not bumpy
-                        bumpy_not_num += 1
+                        bumpy_not += 1
 
                     example = serialize_example(msg, cmd_i, bumpy_i)
                     writer.write(example)
-
+                if DEBUG:
+                    ax.legend()
+                    plt.show()
+                    for line in lines:
+                        line.remove()
                 ind += 1
 
     logger.info(f'Total Number of samples: {len(t)}')
     logger.info(f'Augmentaion numbers: {AUG}')
-    logger.info(f'Number of all bumpy {bumpy_all_num}')
-    logger.info(f'Number of partial bumpy {bumpy_partial_num}')
-    logger.info(f'Number of no bumpy {bumpy_not_num}')
+    logger.info(f'Number of all bumpy {bumpy_all}')
+    logger.info(f'Number of partial bumpy {bumpy_partial}')
+    logger.info(f'Number of no bumpy {bumpy_not}')
+    logger.info(f'Bumpy percentage: {bumpy_step / len(t) / AUG / HORIZON}')
 
     bag.close()
 
 
-def bag_to_tfrecord(bag, args, boundary):
+def bag_to_tfrecord(bag, args):
     img_t, odo_t, pos, yaw, cmd = read_bag(bag)
     if args.plot:
         plot_info(cmd, bag)
-    t = sample_times(img_t, odo_t, args.gap_time)
+    t = sample_times(img_t, odo_t, cmd, args.gap_time)
     pos, yaw, cmd = sample_msgs(t, odo_t, pos, yaw, cmd)
-    save_tfrecord(bag, boundary, t, pos, yaw, cmd)
+    save_tfrecord(bag, t, pos, yaw, cmd, args.radius)
 
 
 if __name__ == '__main__':
@@ -257,17 +272,27 @@ if __name__ == '__main__':
                         type=float, default=0.5,
                         help='The gap time when sampling')
     parser.add_argument('-p', '--plot',
-                        action='store_true',
-                        help='The gap time when sampling')
+                        action='store_true')
+    parser.add_argument('-r', '--radius',
+                        type=float, default=0.1,
+                        help='Radius for contains_points function.\
+                              Positive to shrink the boundary, negative to expand'                                                                                                                                                                                                                                                      )
     args = parser.parse_args()
 
     path = Path(args.path)
 
-    boundary = read_boundary()
-
-    for dirpath, dirnames, filenames in walk(path, followlinks=True):
-        dirpath = Path(dirpath)
-        for filename in filenames:
-            if filename.endswith('.bag'):
-                logger.info(dirpath / filename)
-                bag_to_tfrecord(dirpath / filename, args, boundary)
+    if path.is_file():
+        assert path.suffix == '.bag', 'Not a bag file'
+        logger.info(path)
+        with open(path.with_suffix('.args.txt'), 'w') as f:
+            json.dump(args.__dict__, f, indent=2)
+        bag_to_tfrecord(path, args)
+    else:
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=True):
+            dirpath = Path(dirpath)
+            with open(dirpath / 'args.txt', 'w') as f:
+                json.dump(args.__dict__, f, indent=2)
+            for filename in filenames:
+                if filename.endswith('.bag'):
+                    logger.info(dirpath / filename)
+                    bag_to_tfrecord(dirpath / filename, args)

@@ -1,5 +1,5 @@
 import argparse
-from os import walk
+import json
 from pathlib import Path
 
 import rosbag
@@ -175,7 +175,7 @@ def get_img(msg):
     im = im.resize((width, height), PIL.Image.LANCZOS)
     im = np.array(im)
 
-    assert img.dtype == np.uint8, 'Image dtype not np.uint8'
+    assert im.dtype == np.uint8, 'Image dtype not np.uint8'
     return im
 
 
@@ -322,9 +322,18 @@ if __name__ == '__main__':
 
     path = Path(args.path)
 
-    for dirpath, dirnames, filenames in walk(path):
-        dirpath = Path(dirpath)
-        for filename in filenames:
-            if filename.endswith('.bag'):
-                logger.info(filename)
-                bag_to_tfrecord(dirpath / filename, args)
+    if path.is_file():
+        assert path.suffix == '.bag', 'Not a bag file'
+        logger.info(path)
+        with open(path.with_suffix('.args.txt'), 'w') as f:
+            json.dump(args.__dict__, f, indent=2)
+        bag_to_tfrecord(path, args)
+    else:
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=True):
+            dirpath = Path(dirpath)
+            with open(dirpath / 'args.txt', 'w') as f:
+                json.dump(args.__dict__, f, indent=2)
+            for filename in filenames:
+                if filename.endswith('.bag'):
+                    logger.info(dirpath / filename)
+                    bag_to_tfrecord(dirpath / filename, args)
